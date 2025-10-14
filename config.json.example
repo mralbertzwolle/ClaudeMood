@@ -1,0 +1,67 @@
+{
+  "conversations_dir": "~/.claude/projects",
+  "data_dir": "~/ClaudeMood/data",
+  "export_dir": "~/ClaudeMood/data/exports",
+  "model_cache_dir": "~/ClaudeMood/models/hf_cache",
+
+  "ui": {
+    "window_width": 900,
+    "window_height": 700,
+    "update_interval_seconds": 5
+  },
+
+  "analysis": {
+    "rolling_average_window": 10,
+    "max_text_length": 512
+  },
+
+  "alerts": {
+    "high_stress_threshold": -0.3,
+    "very_negative_threshold": -0.5,
+    "consecutive_negative_count": 4
+  },
+
+  "mood_thresholds": {
+    "very_positive": 0.3,
+    "positive": 0.1,
+    "neutral_high": 0.1,
+    "neutral_low": -0.1,
+    "negative": -0.3
+  },
+
+  "auto_restart": {
+    "enabled": true,
+    "watch_files": [
+      "src/claudemood_app.py",
+      "src/sentiment_analyzer.py",
+      "config.json"
+    ]
+  },
+
+  "health": {
+    "healthy_min_hours": 4,
+    "healthy_max_hours": 8,
+    "overwork_threshold": 8,
+    "extreme_threshold": 10,
+    "late_night_hour": 22,
+    "min_break_duration_minutes": 15,
+    "max_gap_minutes": 30,
+    "min_breaks_per_day": 2,
+    "session_active_window_minutes": 30
+  },
+
+  "notifications": {
+    "enabled": true,
+    "break_reminders": true,
+    "late_night_warnings": true,
+    "daily_limit_alerts": true
+  },
+
+  "snapshots": {
+    "enabled": true,
+    "daily_auto_save": true,
+    "monthly_reports": true,
+    "snapshots_dir": "~/ClaudeMood/data/snapshots",
+    "reports_dir": "~/ClaudeMood/data/reports"
+  }
+}
