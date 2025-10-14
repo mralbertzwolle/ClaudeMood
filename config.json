@@ -12,7 +12,8 @@
 
   "analysis": {
     "rolling_average_window": 10,
-    "max_text_length": 512
+    "max_text_length": 512,
+    "day_start_hour": 4
   },
 
   "alerts": {

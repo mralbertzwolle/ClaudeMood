@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
 from daily_cache import DailyCache
+from date_utils import DateUtils
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QProgressBar, QTextEdit, QTabWidget, QMessageBox,
@@ -636,6 +637,15 @@ class ClaudeMoodApp(QMainWindow):
         self.daily_cache = DailyCache(cache_dir)
         print(f"💾 Cache system initialized: {cache_dir}")
 
+        # Date utilities with custom day boundaries
+        day_start_hour = self.config.get('analysis', {}).get('day_start_hour', 4)
+        self.date_utils = DateUtils(day_start_hour)
+        print(f"📅 Day boundaries: {day_start_hour:02d}:00 - {day_start_hour:02d}:00")
+
+        # Viewing state (which work day are we currently viewing)
+        self.viewing_work_day = self.date_utils.get_current_work_day()
+        self.all_messages_cache = []  # Cache of all messages for historical navigation
+
         # Connect signal to slot (thread-safe communication)
         self.conversation_changed_signal.connect(self.handle_conversation_changed)
 
@@ -813,6 +823,98 @@ class ClaudeMoodApp(QMainWindow):
             border-radius: 10px;
         """)
         layout.addWidget(header)
+
+        # === DATE NAVIGATION BAR ===
+        date_nav_widget = QWidget()
+        date_nav_widget.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        date_nav_layout = QHBoxLayout()
+        date_nav_layout.setContentsMargins(15, 10, 15, 10)
+        date_nav_widget.setLayout(date_nav_layout)
+
+        # Previous day button
+        self.prev_day_btn = QPushButton("← Previous Day")
+        self.prev_day_btn.setFont(QFont("SF Pro Text", 12))
+        self.prev_day_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #667eea;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #5568d3;
+            }
+            QPushButton:pressed {
+                background-color: #4451b8;
+            }
+        """)
+        self.prev_day_btn.clicked.connect(self.go_to_previous_day)
+        date_nav_layout.addWidget(self.prev_day_btn)
+
+        # Current date display
+        self.viewing_date_label = QLabel("Today")
+        self.viewing_date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.viewing_date_label.setFont(QFont("SF Pro Text", 14, QFont.Weight.Bold))
+        self.viewing_date_label.setStyleSheet("color: #2c3e50; padding: 5px;")
+        date_nav_layout.addWidget(self.viewing_date_label, 1)  # stretch factor 1
+
+        # Next day button
+        self.next_day_btn = QPushButton("Next Day →")
+        self.next_day_btn.setFont(QFont("SF Pro Text", 12))
+        self.next_day_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #667eea;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #5568d3;
+            }
+            QPushButton:pressed {
+                background-color: #4451b8;
+            }
+            QPushButton:disabled {
+                background-color: #cbd5e0;
+                color: #a0aec0;
+            }
+        """)
+        self.next_day_btn.clicked.connect(self.go_to_next_day)
+        date_nav_layout.addWidget(self.next_day_btn)
+
+        # "Today" quick button
+        self.today_btn = QPushButton("Today")
+        self.today_btn.setFont(QFont("SF Pro Text", 12))
+        self.today_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #48bb78;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 6px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #38a169;
+            }
+            QPushButton:pressed {
+                background-color: #2f855a;
+            }
+        """)
+        self.today_btn.clicked.connect(self.go_to_today)
+        date_nav_layout.addWidget(self.today_btn)
+
+        layout.addWidget(date_nav_widget)
 
         # === SUBTLE ALERT BANNER ===
         self.alert_banner = QLabel()
@@ -1433,13 +1535,17 @@ class ClaudeMoodApp(QMainWindow):
         # Sort all messages by timestamp (CRITICAL for correct break detection!)
         all_messages.sort(key=lambda m: m['timestamp'])
 
-        # Filter messages from today
-        today_messages = [m for m in all_messages if m['timestamp'].date() == today_date]
+        # Store ALL messages for historical navigation
+        self.all_messages_cache = all_messages
+
+        # Use DateUtils to filter messages for current viewing work day
+        current_work_day = self.date_utils.get_work_day_for_timestamp(today)
+        today_messages = self.date_utils.get_all_messages_for_work_day(all_messages, current_work_day)
 
         # Get recent 25 for display
         recent_messages = all_messages[-25:]
 
-        print(f"📊 Loaded {len(all_messages)} total messages, {len(today_messages)} from today")
+        print(f"📊 Loaded {len(all_messages)} total messages, {len(today_messages)} from current work day")
 
         # If model not loaded yet, just count the messages and stop
         # The reanalyze will happen when model is ready
@@ -1485,6 +1591,9 @@ class ClaudeMoodApp(QMainWindow):
             'avg_sentiment': sum(m['sentiment'] for m in self.sentiment_history) / len(self.sentiment_history) if self.sentiment_history else 0,
         }
         self.daily_cache.save_day_cache(today, cache_data)
+
+        # Update UI to show current viewing date
+        self.update_viewing_date_label()
 
     def check_daily_reset(self, current_timestamp):
         """Check if we need to reset daily tracking (new day)"""
@@ -2158,6 +2267,128 @@ Average Break Duration: {avg_break_duration:.0f} minutes
 
             self.alerts_label.setText("✅ All good! No alerts.\n\n💪 Keep coding with healthy habits!")
             self.alerts_label.setStyleSheet("color: #4CAF50;")
+
+    # === DATE NAVIGATION FUNCTIONS ===
+
+    def go_to_previous_day(self):
+        """Navigate to the previous work day"""
+        self.viewing_work_day = self.date_utils.get_previous_work_day(self.viewing_work_day)
+        self.load_work_day_data(self.viewing_work_day)
+
+    def go_to_next_day(self):
+        """Navigate to the next work day"""
+        new_day = self.date_utils.get_next_work_day(self.viewing_work_day)
+        current_day = self.date_utils.get_current_work_day()
+
+        # Don't go beyond today
+        if new_day <= current_day:
+            self.viewing_work_day = new_day
+            self.load_work_day_data(self.viewing_work_day)
+
+    def go_to_today(self):
+        """Jump back to today"""
+        self.viewing_work_day = self.date_utils.get_current_work_day()
+        self.load_work_day_data(self.viewing_work_day)
+
+    def load_work_day_data(self, work_day: datetime):
+        """
+        Load data for a specific work day (uses cache if available)
+
+        Args:
+            work_day: The work day to load data for
+        """
+        print(f"📅 Loading work day: {work_day.date()}")
+
+        # Update UI to show which day we're viewing
+        self.update_viewing_date_label()
+
+        # Try to load from cache first
+        cached_data = self.daily_cache.load_day_cache(work_day)
+
+        if cached_data:
+            print(f"✅ Loaded from cache: {len(cached_data['messages'])} messages")
+            self.sentiment_history = cached_data['messages']
+            self.breaks_today = cached_data['breaks']
+            if self.sentiment_history:
+                self.current_sentiment = self.sentiment_history[-1]['sentiment']
+        else:
+            print(f"⚠️ No cache for {work_day.date()}, filtering from all messages...")
+            # Filter messages for this work day from all_messages_cache
+            if self.all_messages_cache:
+                day_messages = self.date_utils.get_all_messages_for_work_day(
+                    self.all_messages_cache, work_day
+                )
+                print(f"📊 Found {len(day_messages)} messages for this day")
+
+                # Analyze if model is ready
+                if self.model_loaded:
+                    self.analyze_work_day_messages(day_messages, work_day)
+                else:
+                    print("⏳ Model not ready - will load data when model loads")
+            else:
+                print("⚠️ No messages cache available yet")
+                self.sentiment_history = []
+                self.breaks_today = []
+
+        # Update all UI components
+        self.update_all_ui()
+
+    def analyze_work_day_messages(self, messages: list, work_day: datetime):
+        """
+        Analyze messages for a specific work day and save to cache
+
+        Args:
+            messages: List of message dicts for this work day
+            work_day: The work day these messages belong to
+        """
+        self.sentiment_history = []
+        self.breaks_today = []
+
+        if not messages:
+            print("No messages to analyze")
+            return
+
+        print(f"💪 Analyzing {len(messages)} messages for {work_day.date()}...")
+
+        for i, msg in enumerate(messages):
+            prev_timestamp = messages[i-1]['timestamp'] if i > 0 else None
+            self.analyze_message_text(
+                msg['text'],
+                msg['timestamp'],
+                conversation_file=msg.get('file', ''),
+                prev_global_timestamp=prev_timestamp
+            )
+
+        # Save to cache
+        cache_data = {
+            'messages': self.sentiment_history,
+            'breaks': self.breaks_today,
+            'work_hours': self.calculate_todays_work_hours() if self.sentiment_history else 0,
+            'break_count': len(self.breaks_today),
+            'message_count': len(self.sentiment_history),
+            'avg_sentiment': sum(m['sentiment'] for m in self.sentiment_history) / len(self.sentiment_history) if self.sentiment_history else 0,
+        }
+        self.daily_cache.save_day_cache(work_day, cache_data)
+        print(f"💾 Cached data for {work_day.date()}")
+
+    def update_viewing_date_label(self):
+        """Update the date label to show which day we're viewing"""
+        current_day = self.date_utils.get_current_work_day()
+        date_str = self.date_utils.format_work_day(self.viewing_work_day)
+
+        self.viewing_date_label.setText(date_str)
+
+        # Enable/disable next button based on whether we're at today
+        if self.viewing_work_day.date() >= current_day.date():
+            self.next_day_btn.setEnabled(False)
+        else:
+            self.next_day_btn.setEnabled(True)
+
+    def update_all_ui(self):
+        """Update all UI components with current data"""
+        self.update_mood_display()
+        self.update_chart_and_insights()
+        self.check_alerts()
 
     def export_data(self, silent=False):
         """Export sentiment data to JSON"""
