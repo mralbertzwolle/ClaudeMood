@@ -120,6 +120,79 @@ class DataLoader(QThread):
             print(f"❌ Error loading data: {e}")
 
 
+class AnalysisWorker(QThread):
+    """Background worker for analyzing messages for a specific work day"""
+    progress = pyqtSignal(int, int)  # Emit (current, total) progress
+    finished = pyqtSignal(dict)  # Emit result data when done
+    error = pyqtSignal(str)  # Emit error message
+
+    def __init__(self, app, messages, work_day):
+        super().__init__()
+        self.app = app
+        self.messages = messages
+        self.work_day = work_day
+
+    def run(self):
+        """Analyze messages in background"""
+        try:
+            print(f"💪 Analyzing {len(self.messages)} messages in background...")
+
+            sentiment_history = []
+            breaks_today = []
+            total = len(self.messages)
+
+            for i, msg in enumerate(self.messages):
+                # Emit progress every 10 messages
+                if i % 10 == 0 or i == total - 1:
+                    self.progress.emit(i + 1, total)
+
+                # Analyze with sentiment analyzer
+                prev_timestamp = self.messages[i-1]['timestamp'] if i > 0 else None
+
+                # Call analyze_message_text with proper parameters
+                result = self.app.analyze_single_message(
+                    msg['text'],
+                    msg['timestamp'],
+                    conversation_file=msg.get('file', ''),
+                    prev_global_timestamp=prev_timestamp
+                )
+
+                if result:
+                    sentiment_history.append(result['message_data'])
+                    if result.get('break_detected'):
+                        breaks_today.append(result['break_data'])
+
+            # Calculate stats
+            cache_data = {
+                'messages': sentiment_history,
+                'breaks': breaks_today,
+                'work_hours': self.calculate_work_hours(sentiment_history),
+                'break_count': len(breaks_today),
+                'message_count': len(sentiment_history),
+                'avg_sentiment': sum(m['sentiment'] for m in sentiment_history) / len(sentiment_history) if sentiment_history else 0,
+            }
+
+            print(f"✅ Analysis complete! {len(sentiment_history)} messages analyzed")
+            self.finished.emit(cache_data)
+
+        except Exception as e:
+            error_msg = f"Failed to analyze messages: {e}"
+            print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
+            self.error.emit(error_msg)
+
+    def calculate_work_hours(self, messages):
+        """Calculate work hours from messages"""
+        if not messages or len(messages) < 2:
+            return 0
+
+        first_time = messages[0]['timestamp']
+        last_time = messages[-1]['timestamp']
+        duration = (last_time - first_time).total_seconds() / 3600
+        return max(0, duration)
+
+
 class SearchWorker(QThread):
     """Background worker for searching conversation directories"""
     progress = pyqtSignal(str)  # Emit progress messages
@@ -1207,6 +1280,68 @@ class ClaudeMoodApp(QMainWindow):
 
         tabs.addTab(alerts_tab, "⚠️ Alerts")
 
+        # Tab 5: Background Tasks
+        tasks_tab = QWidget()
+        tasks_layout = QVBoxLayout()
+        tasks_layout.setContentsMargins(20, 20, 20, 20)
+        tasks_tab.setLayout(tasks_layout)
+
+        # Title
+        tasks_title = QLabel("🔄 Background Tasks")
+        tasks_title.setFont(QFont("SF Pro Display", 18, QFont.Weight.Bold))
+        tasks_title.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
+        tasks_layout.addWidget(tasks_title)
+
+        # Description
+        tasks_desc = QLabel("Analysis tasks running in the background")
+        tasks_desc.setStyleSheet("color: #7f8c8d; margin-bottom: 20px;")
+        tasks_layout.addWidget(tasks_desc)
+
+        # Analysis Progress Widget
+        self.analysis_progress_widget = QWidget()
+        self.analysis_progress_widget.setStyleSheet("""
+            QWidget {
+                background-color: #e3f2fd;
+                border-radius: 8px;
+                padding: 20px;
+            }
+        """)
+        analysis_progress_layout = QVBoxLayout()
+        analysis_progress_layout.setContentsMargins(15, 15, 15, 15)
+        self.analysis_progress_widget.setLayout(analysis_progress_layout)
+
+        self.analysis_progress_label = QLabel("💤 No tasks running")
+        self.analysis_progress_label.setFont(QFont("SF Pro Text", 13))
+        self.analysis_progress_label.setStyleSheet("color: #1976d2; background: transparent;")
+        analysis_progress_layout.addWidget(self.analysis_progress_label)
+
+        self.analysis_progress_bar = QProgressBar()
+        self.analysis_progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #90caf9;
+                border-radius: 5px;
+                text-align: center;
+                background-color: white;
+                height: 30px;
+                font-size: 13px;
+            }
+            QProgressBar::chunk {
+                background-color: #42a5f5;
+                border-radius: 3px;
+            }
+        """)
+        self.analysis_progress_bar.setMinimum(0)
+        self.analysis_progress_bar.setMaximum(100)
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.setFormat("%v / %m messages")
+        self.analysis_progress_bar.hide()  # Hidden until task starts
+        analysis_progress_layout.addWidget(self.analysis_progress_bar)
+
+        tasks_layout.addWidget(self.analysis_progress_widget)
+        tasks_layout.addStretch()
+
+        tabs.addTab(tasks_tab, "🔄 Tasks")
+
         layout.addWidget(tabs)
 
         # === FOOTER BUTTONS ===
@@ -1609,6 +1744,80 @@ class ClaudeMoodApp(QMainWindow):
             self.breaks_today = []
             self.last_message_time = None
             self.last_reset_date = current_date
+
+    def analyze_single_message(self, text, timestamp, conversation_file='', prev_global_timestamp=None):
+        """Analyze a single message and return the result (for background analysis)
+
+        Args:
+            text: Message text to analyze
+            timestamp: When the message was sent
+            conversation_file: Which conversation file this came from
+            prev_global_timestamp: Timestamp of previous message in timeline
+
+        Returns:
+            dict: {
+                'message_data': {...},  # Message with sentiment
+                'break_detected': bool,
+                'break_data': {...} or None
+            }
+        """
+        try:
+            if not text or len(text) < 10:
+                return None
+
+            # Check if model is loaded
+            if not self.sentiment_analyzer:
+                return None
+
+            # Detect break before this message
+            break_duration = None
+            if prev_global_timestamp:
+                gap = (timestamp - prev_global_timestamp).total_seconds() / 60
+                min_break = self.config.get('health', {}).get('min_break_duration_minutes', 15)
+                if gap >= min_break:
+                    break_duration = gap
+
+            # Analyze sentiment
+            max_length = self.config.get('analysis', {}).get('max_text_length', 512)
+            result = self.sentiment_analyzer(text[:max_length])[0]
+            label = result['label'].lower()
+            score = result['score']
+
+            # Convert to -1 to 1 scale
+            if label == 'positive':
+                sentiment = score
+            elif label == 'negative':
+                sentiment = -score
+            else:
+                sentiment = 0.0
+
+            # Build result
+            message_data = {
+                'timestamp': timestamp,
+                'sentiment': sentiment,
+                'text': text[:100],
+                'break_before': break_duration is not None,
+                'conversation_file': conversation_file
+            }
+
+            result = {
+                'message_data': message_data,
+                'break_detected': break_duration is not None,
+                'break_data': None
+            }
+
+            if break_duration is not None:
+                result['break_data'] = {
+                    'start': prev_global_timestamp,
+                    'end': timestamp,
+                    'duration_minutes': break_duration
+                }
+
+            return result
+
+        except Exception as e:
+            print(f"❌ Error analyzing single message: {e}")
+            return None
 
     def analyze_message_text(self, text, timestamp, conversation_file='', prev_global_timestamp=None):
         """Analyze sentiment of a single message text
@@ -2320,18 +2529,71 @@ Average Break Duration: {avg_break_duration:.0f} minutes
                 )
                 print(f"📊 Found {len(day_messages)} messages for this day")
 
-                # Analyze if model is ready
-                if self.model_loaded:
-                    self.analyze_work_day_messages(day_messages, work_day)
-                else:
+                # Start background analysis if model is ready
+                if self.model_loaded and len(day_messages) > 0:
+                    self.start_background_analysis(day_messages, work_day)
+                elif not self.model_loaded:
                     print("⏳ Model not ready - will load data when model loads")
+                else:
+                    # No messages - set empty data
+                    self.sentiment_history = []
+                    self.breaks_today = []
+                    self.update_all_ui()
             else:
                 print("⚠️ No messages cache available yet")
                 self.sentiment_history = []
                 self.breaks_today = []
+                self.update_all_ui()
 
-        # Update all UI components
+    def start_background_analysis(self, messages: list, work_day: datetime):
+        """Start analyzing messages in background thread with progress bar"""
+        print(f"🚀 Starting background analysis for {len(messages)} messages...")
+
+        # Show progress bar
+        self.analysis_progress_label.setText(f"💪 Analyzing {work_day.strftime('%Y-%m-%d')} ({len(messages)} messages)...")
+        self.analysis_progress_bar.setMaximum(len(messages))
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.setFormat(f"0 / {len(messages)} messages")
+        self.analysis_progress_bar.show()
+
+        # Start analysis worker
+        self.analysis_worker = AnalysisWorker(self, messages, work_day)
+        self.analysis_worker.progress.connect(self.on_analysis_progress)
+        self.analysis_worker.finished.connect(lambda data: self.on_analysis_complete(data, work_day))
+        self.analysis_worker.error.connect(self.on_analysis_error)
+        self.analysis_worker.start()
+
+    def on_analysis_progress(self, current: int, total: int):
+        """Update progress bar when analysis progresses"""
+        self.analysis_progress_bar.setValue(current)
+        self.analysis_progress_bar.setFormat(f"{current} / {total} messages")
+
+    def on_analysis_complete(self, cache_data: dict, work_day: datetime):
+        """Called when background analysis completes"""
+        print(f"✅ Background analysis complete!")
+
+        # Update state with analyzed data
+        self.sentiment_history = cache_data['messages']
+        self.breaks_today = cache_data['breaks']
+        if self.sentiment_history:
+            self.current_sentiment = self.sentiment_history[-1]['sentiment']
+
+        # Save to cache
+        self.daily_cache.save_day_cache(work_day, cache_data)
+        print(f"💾 Cached data for {work_day.date()}")
+
+        # Hide progress bar
+        self.analysis_progress_bar.hide()
+        self.analysis_progress_label.setText("✅ Analysis complete!")
+
+        # Update UI
         self.update_all_ui()
+
+    def on_analysis_error(self, error_msg: str):
+        """Called when background analysis fails"""
+        print(f"❌ Analysis error: {error_msg}")
+        self.analysis_progress_label.setText(f"❌ Error: {error_msg}")
+        self.analysis_progress_bar.hide()
 
     def analyze_work_day_messages(self, messages: list, work_day: datetime):
         """
