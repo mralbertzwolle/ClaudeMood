@@ -2101,9 +2101,11 @@ class ClaudeMoodApp(QMainWindow):
         """)
 
     def get_todays_messages(self):
-        """Get all messages from today"""
-        today = datetime.now().date()
-        return [h for h in self.sentiment_history if h['timestamp'].date() == today]
+        """Get all messages from current work day (respects day_start_hour config)"""
+        # Use viewing_work_day instead of calendar day
+        # This ensures we filter messages correctly when day_start_hour != 0
+        return [h for h in self.sentiment_history
+                if self.date_utils.get_work_day_for_timestamp(h['timestamp']) == self.viewing_work_day]
 
     def calculate_work_session_info(self):
         """Calculate work session start time, duration, and trend"""
