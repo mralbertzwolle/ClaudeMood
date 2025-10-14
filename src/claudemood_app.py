@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from daily_cache import DailyCache
 from date_utils import DateUtils
+from workers import ModelLoader, DataLoader, AnalysisWorker, SearchWorker
+from config_utils import load_config, save_config, find_conversations_directories
+from file_monitors import AppFileMonitor, ConversationMonitor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QProgressBar, QTextEdit, QTabWidget, QMessageBox,
