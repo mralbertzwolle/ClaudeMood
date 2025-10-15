@@ -1,53 +1,9 @@
-#!/usr/bin/env python3
 """
 Configuration utilities for ClaudeMood
 """
 import json
 import subprocess
 from pathlib import Path
-
-
-def load_config():
-    """Load configuration from config.json"""
-    config_path = Path(__file__).parent.parent / "config.json"
-
-    if not config_path.exists():
-        print(f"⚠️  Config file not found: {config_path}")
-        print("📋 Creating default config from template...")
-
-        template_path = config_path.parent / "config.json.example"
-        if template_path.exists():
-            import shutil
-            shutil.copy(template_path, config_path)
-            print(f"✅ Config created: {config_path}")
-        else:
-            raise FileNotFoundError(f"Config template not found: {template_path}")
-
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-
-    # Expand ~ in paths
-    for key in ['conversations_dir', 'data_dir', 'export_dir', 'model_cache_dir']:
-        if key in config:
-            config[key] = Path(config[key]).expanduser()
-
-    return config
-
-
-def save_config(config):
-    """Save configuration to config.json"""
-    config_path = Path(__file__).parent.parent / "config.json"
-
-    # Convert Path objects back to strings
-    config_dict = config.copy()
-    for key in ['conversations_dir', 'data_dir', 'export_dir', 'model_cache_dir']:
-        if key in config_dict and isinstance(config_dict[key], Path):
-            config_dict[key] = str(config_dict[key])
-
-    with open(config_path, 'w') as f:
-        json.dump(config_dict, f, indent=2)
-
-    print(f"💾 Config saved to: {config_path}")
 
 
 def find_conversations_directories():
@@ -99,3 +55,46 @@ def find_conversations_directories():
             print(f"⚠️  Search error: {e}")
 
     return found_dirs
+
+
+def load_config():
+    """Load configuration from config.json"""
+    config_path = Path(__file__).parent.parent / "config.json"
+
+    if not config_path.exists():
+        print(f"⚠️  Config file not found: {config_path}")
+        print("📋 Creating default config from template...")
+
+        template_path = config_path.parent / "config.json.example"
+        if template_path.exists():
+            import shutil
+            shutil.copy(template_path, config_path)
+            print(f"✅ Config created: {config_path}")
+        else:
+            raise FileNotFoundError(f"Config template not found: {template_path}")
+
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # Expand ~ in paths
+    for key in ['conversations_dir', 'data_dir', 'export_dir', 'model_cache_dir']:
+        if key in config:
+            config[key] = Path(config[key]).expanduser()
+
+    return config
+
+
+def save_config(config):
+    """Save configuration to config.json"""
+    config_path = Path(__file__).parent.parent / "config.json"
+
+    # Convert Path objects back to strings
+    config_dict = config.copy()
+    for key in ['conversations_dir', 'data_dir', 'export_dir', 'model_cache_dir']:
+        if key in config_dict and isinstance(config_dict[key], Path):
+            config_dict[key] = str(config_dict[key])
+
+    with open(config_path, 'w') as f:
+        json.dump(config_dict, f, indent=2)
+
+    print(f"💾 Config saved to: {config_path}")

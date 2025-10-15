@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Background worker threads for ClaudeMood
 """
@@ -9,8 +8,8 @@ from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassifica
 
 
 class ModelLoader(QThread):
-    """Background worker for loading RobBERT sentiment model"""
-    finished = pyqtSignal(object)  # Emit the loaded pipeline
+    """Background worker for loading sentiment model"""
+    finished = pyqtSignal(object)  # Emit loaded pipeline
     error = pyqtSignal(str)  # Emit error message
 
     def __init__(self, model_cache_dir):
@@ -18,27 +17,57 @@ class ModelLoader(QThread):
         self.model_cache_dir = model_cache_dir
 
     def run(self):
-        """Load model in background"""
+        """Load the sentiment analysis model"""
         try:
             print("🤖 Loading RobBERT model in background...")
 
-            tokenizer = AutoTokenizer.from_pretrained(
-                "DTAI-KULeuven/robbert-v2-dutch-sentiment",
-                cache_dir=str(self.model_cache_dir),
-                local_files_only=True
-            )
-            model = AutoModelForSequenceClassification.from_pretrained(
-                "DTAI-KULeuven/robbert-v2-dutch-sentiment",
-                cache_dir=str(self.model_cache_dir),
-                local_files_only=True
-            )
-            sentiment_pipeline = pipeline(
-                "sentiment-analysis",
-                model=model,
-                tokenizer=tokenizer
-            )
-            print("✅ Model loaded from local cache!")
-            self.finished.emit(sentiment_pipeline)
+            # Set environment variables
+            import os
+            os.environ['TRANSFORMERS_CACHE'] = str(self.model_cache_dir)
+            os.environ['HF_HOME'] = str(self.model_cache_dir)
+            os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+
+            # Ensure cache directory exists
+            self.model_cache_dir.mkdir(parents=True, exist_ok=True)
+
+            # Load model and tokenizer
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    "DTAI-KULeuven/robbert-v2-dutch-sentiment",
+                    cache_dir=str(self.model_cache_dir)
+                )
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    "DTAI-KULeuven/robbert-v2-dutch-sentiment",
+                    cache_dir=str(self.model_cache_dir)
+                )
+                sentiment_pipeline = pipeline(
+                    "sentiment-analysis",
+                    model=model,
+                    tokenizer=tokenizer
+                )
+                print("✅ Model loaded successfully!")
+                self.finished.emit(sentiment_pipeline)
+            except Exception as e:
+                print(f"⚠️ Trying local cache: {e}")
+                tokenizer = AutoTokenizer.from_pretrained(
+                    "DTAI-KULeuven/robbert-v2-dutch-sentiment",
+                    cache_dir=str(self.model_cache_dir),
+                    local_files_only=True
+                )
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    "DTAI-KULeuven/robbert-v2-dutch-sentiment",
+                    cache_dir=str(self.model_cache_dir),
+                    local_files_only=True
+                )
+                sentiment_pipeline = pipeline(
+                    "sentiment-analysis",
+                    model=model,
+                    tokenizer=tokenizer
+                )
+                print("✅ Model loaded from local cache!")
+                self.finished.emit(sentiment_pipeline)
 
         except Exception as e:
             error_msg = f"Failed to load model: {e}"

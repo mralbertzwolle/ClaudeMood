@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """
 File system monitors for ClaudeMood
 """
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 from watchdog.events import FileSystemEventHandler
 
 
@@ -38,31 +37,22 @@ class ConversationMonitor(FileSystemEventHandler):
 
     def __init__(self, callback, conversations_dir):
         self.callback = callback
-        self.conversations_dir = Path(conversations_dir)
+        self.conversations_path = Path(conversations_dir)
         self.last_modified = {}
+        self.pending_update = None
 
     def on_modified(self, event):
-        """Handle file modification events"""
         if event.is_directory:
             return
-
-        # Only watch JSONL files (Claude Code format)
-        if not event.src_path.endswith('.jsonl'):
+        # Monitor both .json (old format) and .jsonl (new Claude Code format)
+        if not (event.src_path.endswith('.json') or event.src_path.endswith('.jsonl')):
             return
 
-        # Must be in conversations directory
-        event_path = Path(event.src_path)
-        if not str(event_path).startswith(str(self.conversations_dir)):
-            return
-
-        # Debounce: ignore rapid successive changes
+        # Debounce: ignore rapid successive changes (1 second cooldown)
         now = datetime.now()
         if event.src_path in self.last_modified:
-            if (now - self.last_modified[event.src_path]).total_seconds() < 2:
+            if (now - self.last_modified[event.src_path]).total_seconds() < 1.0:
                 return
 
         self.last_modified[event.src_path] = now
-        print(f"📝 Conversation changed: {event.src_path}")
-
-        # Notify callback
         self.callback(event.src_path)
