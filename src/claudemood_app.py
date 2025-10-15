@@ -2169,7 +2169,9 @@ class ClaudeMoodApp(QMainWindow):
 """
             self.time_info_label.setText(info_text)
         else:
-            self.time_info_label.setText("⏳ No messages yet today. Start coding to see your session!")
+            # Fast path: Skip expensive chart rendering for empty data
+            # Just update the info label - chart will show cached "No data" message
+            self.time_info_label.setText("⏳ No messages for this day. Select another day or start coding!")
 
     def update_dashboard(self):
         """Update dashboard metrics"""
